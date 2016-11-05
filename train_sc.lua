@@ -20,8 +20,8 @@ cmd:text()
 cmd:text('Options')
 
 -- Data input settings
-cmd:option('-input_h5','coco/data.h5','path to the h5file containing the preprocessed dataset')
-cmd:option('-input_json','coco/data.json','path to the json file containing additional info and vocab')
+cmd:option('-input_h5','coco/cocotalk.h5','path to the h5file containing the preprocessed dataset')
+cmd:option('-input_json','coco/cocotalk.json','path to the json file containing additional info and vocab')
 cmd:option('-cnn_proto','model/VGG_ILSVRC_16_layers_deploy.prototxt','path to CNN prototxt file in Caffe format. Note this MUST be a VGGNet-16 right now.')
 cmd:option('-cnn_model','model/VGG_ILSVRC_16_layers.caffemodel','path to CNN model file containing the weights, Caffe format. Note this MUST be a VGGNet-16 right now.')
 cmd:option('-start_from', '', 'path to a model checkpoint to initialize model weights from. Empty = don\'t')
@@ -31,7 +31,7 @@ cmd:option('-rnn_size',512,'size of the rnn in number of hidden nodes in each la
 cmd:option('-input_encoding_size',512,'the encoding size of each token in the vocabulary, and the image.')
 
 -- Optimization: General
-cmd:option('-max_iters', -1, 'max number of iterations to run for (-1 = run forever)')
+cmd:option('-max_iters', 200000, 'max number of iterations to run for (-1 = run forever)')
 cmd:option('-batch_size',16,'what is the batch size in number of images per batch? (there will be x seq_per_img sentences)')
 cmd:option('-grad_clip',0.1,'clip gradients at this value (note should be lower than usual 5 because we normalize grads by both batch and seq_length)')
 cmd:option('-drop_prob_lm', 0.5, 'strength of dropout in the Language Model RNN')
@@ -52,12 +52,22 @@ cmd:option('-cnn_optim_beta',0.999,'alpha for momentum of CNN')
 cmd:option('-cnn_learning_rate',1e-5,'learning rate for the CNN')
 cmd:option('-cnn_weight_decay', 0, 'L2 weight decay just for the CNN')
 
+-- Log
+cmd:option('-log_per_iter', 50, 'log per iterations')
+
+-- Sampling options
+cmd:option('-sample_max', 1, '1 = sample argmax words. 0 = sample from distributions.')
+cmd:option('-beam_size', 2, 'used when sample_max = 1, indicates number of beams in beam search. Usually 2 or 3 works well. More is not better. Set this to 1 for faster runtime but a bit worse performance.')
+cmd:option('-temperature', 1.0, 'temperature when sampling from distributions (i.e. when sample_max = 0). Lower = "safer" predictions.')
+
 -- Evaluation/Checkpointing
-cmd:option('-val_images_use', 3200, 'how many images to use when periodically evaluating the validation loss? (-1 = all)')
+cmd:option('-val_images_use', 5000, 'how many images to use when periodically evaluating the validation loss? (-1 = all)')
 cmd:option('-save_checkpoint_every', 2500, 'how often to save a model checkpoint?')
-cmd:option('-checkpoint_path', '', 'folder to save checkpoints into (empty = this folder)')
-cmd:option('-language_eval', 0, 'Evaluate language as well (1 = yes, 0 = no)? BLEU/CIDEr/METEOR/ROUGE_L? requires coco-caption code from Github.')
+cmd:option('-checkpoint_path', 'checkpoint_path', 'folder to save checkpoints into (empty = this folder)')
+cmd:option('-language_eval', 1, 'Evaluate language as well (1 = yes, 0 = no)? BLEU/CIDEr/METEOR/ROUGE_L? requires coco-caption code from Github.')
 cmd:option('-losses_log_every', 25, 'How often do we snapshot losses, for inclusion in the progress dump? (0 = disable)')
+
+cmd:option('-verbose', 1, 'Verbose level: 0 = no, 1 = normal, 2 = print captions')
 
 -- misc
 cmd:option('-backend', 'cudnn', 'nn|cudnn')
@@ -174,7 +184,8 @@ collectgarbage() -- "yeah, sure why not"
 -- Validation evaluation
 -------------------------------------------------------------------------------
 local function eval_split(split, evalopt)
-  local verbose = utils.getopt(evalopt, 'verbose', true)
+  -- local verbose = utils.getopt(evalopt, 'verbose', true)
+  local verbose = opt.verbose
   local val_images_use = utils.getopt(evalopt, 'val_images_use', true)
 
   protos.cnn:evaluate()
@@ -201,12 +212,14 @@ local function eval_split(split, evalopt)
     loss_evals = loss_evals + 1
 
     -- forward the model to also get generated samples for each image
-    local seq = protos.lm:sample(feats)
+    local sample_opts = { sample_max = opt.sample_max, beam_size = opt.beam_size, temperature = opt.temperature }
+    local seq = protos.lm:sample(feats, sample_opts)
+    -- local seq = protos.lm:sample(feats)
     local sents = net_utils.decode_sequence(vocab, seq)
     for k=1,#sents do
       local entry = {image_id = data.infos[k].id, caption = sents[k]}
       table.insert(predictions, entry)
-      if verbose then
+      if verbose >= 2 then
         print(string.format('image %s: %s', entry.image_id, entry.caption))
       end
     end
@@ -214,7 +227,7 @@ local function eval_split(split, evalopt)
     -- if we wrapped around the split or used up val imgs budget then bail
     local ix0 = data.bounds.it_pos_now
     local ix1 = math.min(data.bounds.it_max, val_images_use)
-    if verbose then
+    if verbose >= 1 then
       print(string.format('evaluating validation performance... %d/%d (%f)', ix0-1, ix1, loss))
     end
 
@@ -307,7 +320,9 @@ while true do
   -- eval loss/gradient
   local losses = lossFun()
   if iter % opt.losses_log_every == 0 then loss_history[iter] = losses.total_loss end
-  print(string.format('iter %d: %f', iter, losses.total_loss))
+  if iter % opt.log_per_iter then
+    print(string.format('iter %d: %f', iter, losses.total_loss))
+  end
 
   -- save checkpoint once in a while (or on final iteration)
   if (iter % opt.save_checkpoint_every == 0 or iter == opt.max_iters-1) then
@@ -315,13 +330,13 @@ while true do
     -- evaluate the validation performance
     local val_loss, val_predictions, lang_stats = eval_split('val', {val_images_use = opt.val_images_use})
     print('validation loss: ', val_loss)
-    print(lang_stats)
+    -- print(lang_stats)
     val_loss_history[iter] = val_loss
     if lang_stats then
       val_lang_stats_history[iter] = lang_stats
     end
 
-    local checkpoint_path = path.join(opt.checkpoint_path, 'model_id' .. opt.id)
+    local checkpoint_path = path.join(opt.checkpoint_path, 'model_id_' .. iter .. opt.id)
 
     -- write a (thin) json report
     local checkpoint = {}

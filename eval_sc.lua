@@ -22,10 +22,10 @@ cmd:text('Options')
 -- Input paths
 cmd:option('-model','','path to model to evaluate')
 -- Basic options
-cmd:option('-batch_size', 1, 'if > 0 then overrule, otherwise load from checkpoint.')
-cmd:option('-num_images', 100, 'how many images to use when periodically evaluating the loss? (-1 = all)')
-cmd:option('-language_eval', 0, 'Evaluate language as well (1 = yes, 0 = no)? BLEU/CIDEr/METEOR/ROUGE_L? requires coco-caption code from Github.')
-cmd:option('-dump_images', 1, 'Dump images into vis/imgs folder for vis? (1=yes,0=no)')
+cmd:option('-batch_size', 0, 'if > 0 then overrule, otherwise load from checkpoint.')
+cmd:option('-num_images', -1, 'how many images to use when periodically evaluating the loss? (-1 = all)')
+cmd:option('-language_eval', 1, 'Evaluate language as well (1 = yes, 0 = no)? BLEU/CIDEr/METEOR/ROUGE_L? requires coco-caption code from Github.')
+cmd:option('-dump_images', 0, 'Dump images into vis/imgs folder for vis? (1=yes,0=no)')
 cmd:option('-dump_json', 1, 'Dump json with predictions into vis folder? (1=yes,0=no)')
 cmd:option('-dump_path', 0, 'Write image paths along with predictions into vis json? (1=yes,0=no)')
 -- Sampling options
@@ -172,9 +172,9 @@ end
 
 local loss, split_predictions, lang_stats = eval_split(opt.split, {num_images = opt.num_images})
 print('loss: ', loss)
-if lang_stats then
-  print(lang_stats)
-end
+-- if lang_stats then
+--  print(lang_stats)
+-- end 
 
 if opt.dump_json == 1 then
   -- dump the json
