@@ -9,6 +9,8 @@ local utils = require 'misc.utils'
 require 'misc.DataLoader'
 local net_utils = require 'misc.net_utils'
 require 'misc.optim_updates'
+require 'optim'
+
 
 -------------------------------------------------------------------------------
 -- Input arguments and options
@@ -22,16 +24,16 @@ cmd:text('Options')
 -- Data input settings
 cmd:option('-input_h5','coco/cocotalk.h5','path to the h5file containing the preprocessed dataset')
 cmd:option('-input_json','coco/cocotalk.json','path to the json file containing additional info and vocab')
-cmd:option('-cnn_proto','model/VGG_ILSVRC_16_layers_deploy.prototxt','path to CNN prototxt file in Caffe format. Note this MUST be a VGGNet-16 right now.')
-cmd:option('-cnn_model','model/VGG_ILSVRC_16_layers.caffemodel','path to CNN model file containing the weights, Caffe format. Note this MUST be a VGGNet-16 right now.')
-cmd:option('-start_from', '', 'path to a model checkpoint to initialize model weights from. Empty = don\'t')
+cmd:option('-cnn_proto','model/VGG_ILSVRC_19_layers_deploy.prototxt','path to CNN prototxt file in Caffe format. Note this MUST be a VGGNet-16 right now.')
+cmd:option('-cnn_model','model/VGG_ILSVRC_19_layers.caffemodel','path to CNN model file containing the weights, Caffe format. Note this MUST be a VGGNet-16 right now.')
+cmd:option('-start_from', 'checkpoint_path/model_id_69999.t7', 'path to a model checkpoint to initialize model weights from. Empty = don\'t')
 
 -- Model settings
 cmd:option('-rnn_size',512,'size of the rnn in number of hidden nodes in each layer')
 cmd:option('-input_encoding_size',512,'the encoding size of each token in the vocabulary, and the image.')
 
 -- Optimization: General
-cmd:option('-max_iters', 200000, 'max number of iterations to run for (-1 = run forever)')
+cmd:option('-max_iters', 70000, 'max number of iterations to run for (-1 = run forever)')
 cmd:option('-batch_size',16,'what is the batch size in number of images per batch? (there will be x seq_per_img sentences)')
 cmd:option('-grad_clip',0.1,'clip gradients at this value (note should be lower than usual 5 because we normalize grads by both batch and seq_length)')
 cmd:option('-drop_prob_lm', 0.5, 'strength of dropout in the Language Model RNN')
@@ -67,7 +69,7 @@ cmd:option('-checkpoint_path', 'checkpoint_path', 'folder to save checkpoints in
 cmd:option('-language_eval', 1, 'Evaluate language as well (1 = yes, 0 = no)? BLEU/CIDEr/METEOR/ROUGE_L? requires coco-caption code from Github.')
 cmd:option('-losses_log_every', 25, 'How often do we snapshot losses, for inclusion in the progress dump? (0 = disable)')
 
-cmd:option('-verbose', 1, 'Verbose level: 0 = no, 1 = normal, 2 = print captions')
+cmd:option('-verbose', 0, 'Verbose level: 0 = no, 1 = normal, 2 = print captions')
 
 -- misc
 cmd:option('-backend', 'cudnn', 'nn|cudnn')
@@ -76,11 +78,15 @@ cmd:option('-seed', 123, 'random number generator seed to use')
 cmd:option('-gpuid', 0, 'which gpu to use. -1 = use CPU')
 cmd:option('-language_model', 'misc_tc.LanguageModel_sc', 'choose which language model to use')
 
+cmd:option('-layer_num', 44, 'number of cnn layers for image embedding')
+cmd:option('-log_file', 'loss.log', '')
+
 cmd:text()
 
 -------------------------------------------------------------------------------
 -- Basic Torch initializations
 -------------------------------------------------------------------------------
+arg = {}
 local opt = cmd:parse(arg)
 torch.manualSeed(opt.seed)
 torch.setdefaulttensortype('torch.FloatTensor') -- for CPU
@@ -138,7 +144,7 @@ else
   local cnn_backend = opt.backend
   if opt.gpuid == -1 then cnn_backend = 'nn' end -- override to nn if gpu is disabled
   local cnn_raw = loadcaffe.load(opt.cnn_proto, opt.cnn_model, cnn_backend)
-  protos.cnn = net_utils.build_cnn(cnn_raw, {encoding_size = opt.input_encoding_size, backend = cnn_backend})
+  protos.cnn = net_utils.build_cnn(cnn_raw, {encoding_size = opt.input_encoding_size, backend = cnn_backend, layer_num = opt.layer_num})
   -- initialize a special FeatExpander module that "corrects" for the batch number discrepancy 
   -- where we have multiple captions per one image in a batch. This is done for efficiency
   -- because doing a CNN forward pass is expensive. We expand out the CNN features for each sentence
@@ -315,14 +321,21 @@ local loss_history = {}
 local val_lang_stats_history = {}
 local val_loss_history = {}
 local best_score
+
+-- Logger
+logger = optim.Logger(opt.log_file)
+logger:display(false)
+logger:setNames{'Train loss', 'Val loss'}
+
 while true do  
 
   -- eval loss/gradient
   local losses = lossFun()
   if iter % opt.losses_log_every == 0 then loss_history[iter] = losses.total_loss end
-  if iter % opt.log_per_iter then
+  if iter % opt.log_per_iter == 0 then
     print(string.format('iter %d: %f', iter, losses.total_loss))
   end
+
 
   -- save checkpoint once in a while (or on final iteration)
   if (iter % opt.save_checkpoint_every == 0 or iter == opt.max_iters-1) then
@@ -349,6 +362,10 @@ while true do
 
     utils.write_json(checkpoint_path .. '.json', checkpoint)
     print('wrote json checkpoint to ' .. checkpoint_path .. '.json')
+        
+    -- log
+    logger:add{losses.total_loss, val_loss}
+    logger:plot()
 
     -- write the full model checkpoint as well if we did better than ever
     local current_score
@@ -360,6 +377,11 @@ while true do
       current_score = -val_loss
     end
     if best_score == nil or current_score > best_score then
+      if best_score == nil then
+        print("current " .. current_score .. " best none")
+      else
+        print("current " .. current_score .. " best " .. best_score)
+      end
       best_score = current_score
       if iter > 0 then -- dont save on very first iteration
         -- include the protos (which have weights) and save to file
