@@ -1,6 +1,39 @@
 local utils = require 'misc.utils'
 local net_utils = {}
 
+require 'torch'
+
+
+-- load CNN in t7 format. Only for ResNet from github.com/facebook/fb.resnet.torch
+function net_utils.build_resnet(opt)
+  local cnn_raw = torch.load(utils.getopt(opt, 'cnn_model', ''))
+  local layer_num = cnn_raw:size()
+  local backend = utils.getopt(opt, 'backend', 'cudnn')
+  local encoding_size = utils.getopt(opt, 'input_encoding_size', 512)
+  
+  if backend == 'cudnn' then
+    require 'cudnn'
+    backend = cudnn
+  elseif backend == 'nn' then
+    require 'nn'
+    backend = nn
+  else
+    error(string.format('Unrecognized backend "%s"', backend))
+  end
+  
+  local cnn_part = nn.Sequential()
+  
+  -- Remove the last fc layer
+  for i = 1, layer_num - 1 do
+    local layer = cnn:get(i)
+    cnn_part:add(layer)
+  end
+  
+  local embedding_input_size = cnn_raw[layer_num - 1].numElements
+  cnn_part:add(nn.Linear(embedding_input_size, encoding_size))
+  return cnn_part
+end
+
 -- take a raw CNN from Caffe and perform surgery. Note: VGG-16 SPECIFIC!
 function net_utils.build_cnn(cnn, opt)
   local layer_num = utils.getopt(opt, 'layer_num', 38)

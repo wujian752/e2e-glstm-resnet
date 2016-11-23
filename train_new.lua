@@ -72,6 +72,8 @@ cmd:option('-gpuid', 0, 'which gpu to use. -1 = use CPU')
 cmd:option('-layer_num', 44, 'number of cnn layers for image embedding')
 cmd:option('-log_file', 'loss.log', '')
 
+cmd:option('-useNet', 'VGG', 'CNN type')
+
 cmd:text()
 
 -------------------------------------------------------------------------------
@@ -124,8 +126,12 @@ else
   -- initialize the ConvNet
   local cnn_backend = opt.backend
   if opt.gpuid == -1 then cnn_backend = 'nn' end -- override to nn if gpu is disabled
-  local cnn_raw = loadcaffe.load(opt.cnn_proto, opt.cnn_model, cnn_backend)
-  protos.cnn = net_utils.build_cnn(cnn_raw, {encoding_size = opt.input_encoding_size, backend = cnn_backend})
+  if opt.useNet == 'VGG' then
+    local cnn_raw = loadcaffe.load(opt.cnn_proto, opt.cnn_model, cnn_backend)
+    protos.cnn = net_utils.build_cnn(cnn_raw, {encoding_size = opt.input_encoding_size, backend = cnn_backend})
+  else
+    protos.cnn = net_utils.build_resnet(opt)
+  end
   -- initialize a special FeatExpander module that "corrects" for the batch number discrepancy 
   -- where we have multiple captions per one image in a batch. This is done for efficiency
   -- because doing a CNN forward pass is expensive. We expand out the CNN features for each sentence
