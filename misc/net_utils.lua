@@ -2,16 +2,14 @@ local utils = require 'misc.utils'
 local net_utils = {}
 
 require 'torch'
-
+require 'nn'
 
 -- load CNN in t7 format. Only for ResNet from github.com/facebook/fb.resnet.torch
 function net_utils.build_resnet(opt)
-  local cnn_raw = torch.load(utils.getopt(opt, 'cnn_model', ''))
-  local layer_num = cnn_raw:size()
   local backend = utils.getopt(opt, 'backend', 'cudnn')
-  local encoding_size = utils.getopt(opt, 'input_encoding_size', 512)
-  
   if backend == 'cudnn' then
+    require 'cutorch'
+    require 'cunn'
     require 'cudnn'
     backend = cudnn
   elseif backend == 'nn' then
@@ -20,16 +18,20 @@ function net_utils.build_resnet(opt)
   else
     error(string.format('Unrecognized backend "%s"', backend))
   end
-  
+ 
+  local cnn_raw = torch.load(utils.getopt(opt, 'cnn_model', ''))
+  local layer_num = cnn_raw:size()
+  local encoding_size = utils.getopt(opt, 'input_encoding_size', 512)
+ 
   local cnn_part = nn.Sequential()
   
   -- Remove the last fc layer
   for i = 1, layer_num - 1 do
-    local layer = cnn:get(i)
+    local layer = cnn_raw:get(i)
     cnn_part:add(layer)
   end
   
-  local embedding_input_size = cnn_raw[layer_num - 1].numElements
+  local embedding_input_size = cnn_raw:get(layer_num - 1).numElements
   cnn_part:add(nn.Linear(embedding_input_size, encoding_size))
   return cnn_part
 end
@@ -232,7 +234,7 @@ function net_utils.language_eval(predictions, id)
   local out_struct = {val_predictions = predictions}
   utils.write_json('coco-caption/val' .. id .. '.json', out_struct) -- serialize to json (ew, so gross)
   os.execute('./misc/call_python_caption_eval.sh val' .. id .. '.json') -- i'm dying over here
-  local result_struct = utils.read_json('coco-caption/val' .. id .. '.json') -- god forgive me
+  local result_struct = utils.read_json('coco-caption/val' .. id .. '.json' .. '_out.json') -- god forgive me
   return result_struct
 end
 
