@@ -26,14 +26,14 @@ cmd:option('-input_h5','coco/cocotalk.h5','path to the h5file containing the pre
 cmd:option('-input_json','coco/cocotalk.json','path to the json file containing additional info and vocab')
 cmd:option('-cnn_proto','model/VGG_ILSVRC_19_layers_deploy.prototxt','path to CNN prototxt file in Caffe format. Note this MUST be a VGGNet-16 right now.')
 cmd:option('-cnn_model','model/VGG_ILSVRC_19_layers.caffemodel','path to CNN model file containing the weights, Caffe format. Note this MUST be a VGGNet-16 right now.')
-cmd:option('-start_from', 'checkpoint_path/model_id_69999.t7', 'path to a model checkpoint to initialize model weights from. Empty = don\'t')
+cmd:option('-start_from', 'checkpoint_path/resnet-100-sc/model_id.t7', 'path to a model checkpoint to initialize model weights from. Empty = don\'t')
 
 -- Model settings
 cmd:option('-rnn_size',512,'size of the rnn in number of hidden nodes in each layer')
 cmd:option('-input_encoding_size',512,'the encoding size of each token in the vocabulary, and the image.')
 
 -- Optimization: General
-cmd:option('-max_iters', 70000, 'max number of iterations to run for (-1 = run forever)')
+cmd:option('-max_iters', 200000, 'max number of iterations to run for (-1 = run forever)')
 cmd:option('-batch_size',16,'what is the batch size in number of images per batch? (there will be x seq_per_img sentences)')
 cmd:option('-grad_clip',0.1,'clip gradients at this value (note should be lower than usual 5 because we normalize grads by both batch and seq_length)')
 cmd:option('-drop_prob_lm', 0.5, 'strength of dropout in the Language Model RNN')
@@ -55,7 +55,7 @@ cmd:option('-cnn_learning_rate',1e-5,'learning rate for the CNN')
 cmd:option('-cnn_weight_decay', 0, 'L2 weight decay just for the CNN')
 
 -- Log
-cmd:option('-log_per_iter', 50, 'log per iterations')
+cmd:option('-log_per_iter', 100, 'log per iterations')
 
 -- Sampling options
 cmd:option('-sample_max', 1, '1 = sample argmax words. 0 = sample from distributions.')
@@ -116,7 +116,7 @@ if string.len(opt.start_from) > 0 then
   print('initializing weights from ' .. opt.start_from)
   local loaded_checkpoint = torch.load(opt.start_from)
   protos = loaded_checkpoint.protos
-  net_utils.unsanitize_gradients(protos.cnn)
+  -- net_utils.unsanitize_gradients(protos.cnn)
   local lm_modules = protos.lm:getModulesList()
 
   -- initial the weights of text_conditional embedding if not exist
@@ -124,7 +124,7 @@ if string.len(opt.start_from) > 0 then
       protos.lm:createTC()
   end
 
-  for k,v in pairs(lm_modules) do net_utils.unsanitize_gradients(v) end
+  -- for k,v in pairs(lm_modules) do net_utils.unsanitize_gradients(v) end
   protos.crit = nn.LanguageModelCriterion() -- not in checkpoints, create manually
   protos.expander = nn.FeatExpander(opt.seq_per_img) -- not in checkpoints, create manually
 else
@@ -176,9 +176,9 @@ thin_lm.lookup_table:share(protos.lm.lookup_table, 'weight', 'bias')
 thin_lm.lookup_table_tc:share(protos.lm.lookup_table_tc, 'weight', 'bias')
 local thin_cnn = protos.cnn:clone('weight', 'bias')
 -- sanitize all modules of gradient storage so that we dont save big checkpoints
-net_utils.sanitize_gradients(thin_cnn)
+-- net_utils.sanitize_gradients(thin_cnn)
 local lm_modules = thin_lm:getModulesList()
-for k,v in pairs(lm_modules) do net_utils.sanitize_gradients(v) end
+-- for k,v in pairs(lm_modules) do net_utils.sanitize_gradients(v) end
 
 -- create clones and ensure parameter sharing. we have to do this 
 -- all the way here at the end because calls such as :cuda() and

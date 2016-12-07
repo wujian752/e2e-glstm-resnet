@@ -24,8 +24,8 @@ cmd:text('Options')
 -- Data input settings
 cmd:option('-input_h5','coco/cocotalk.h5','path to the h5file containing the preprocessed dataset')
 cmd:option('-input_json','coco/cocotalk.json','path to the json file containing additional info and vocab')
-cmd:option('-cnn_proto','model/VGG_ILSVRC_19_layers_deploy.prototxt','path to CNN prototxt file in Caffe format. Note this MUST be a VGGNet-16 right now.')
-cmd:option('-cnn_model','model/VGG_ILSVRC_19_layers.caffemodel','path to CNN model file containing the weights, Caffe format. Note this MUST be a VGGNet-16 right now.')
+cmd:option('-cnn_proto','model/VGG_ILSVRC_16_layers_deploy.prototxt','path to CNN prototxt file in Caffe format. Note this MUST be a VGGNet-16 right now.')
+cmd:option('-cnn_model','model/VGG_ILSVRC_16_layers.caffemodel','path to CNN model file containing the weights, Caffe format. Note this MUST be a VGGNet-16 right now.')
 cmd:option('-start_from', '', 'path to a model checkpoint to initialize model weights from. Empty = don\'t')
 
 -- Model settings
@@ -53,6 +53,14 @@ cmd:option('-cnn_optim_alpha',0.8,'alpha for momentum of CNN')
 cmd:option('-cnn_optim_beta',0.999,'alpha for momentum of CNN')
 cmd:option('-cnn_learning_rate',1e-5,'learning rate for the CNN')
 cmd:option('-cnn_weight_decay', 0, 'L2 weight decay just for the CNN')
+
+-- Log
+cmd:option('-log_per_iter', 50, 'log per iterations')
+
+-- Sampling options
+cmd:option('-sample_max', 1, '1 = sample argmax words. 0 = sample from distributions.')
+cmd:option('-beam_size', 2, 'used when sample_max = 1, indicates number of beams in beam search. Usually 2 or 3 works well. More is not better. Set this to 1 for faster runtime but a bit worse performance.')
+cmd:option('-temperature', 1.0, 'temperature when sampling from distributions (i.e. when sample_max = 0). Lower = "safer" predictions.')
 
 -- Evaluation/Checkpointing
 cmd:option('-val_images_use', 5000, 'how many images to use when periodically evaluating the validation loss? (-1 = all)')
@@ -106,9 +114,9 @@ if string.len(opt.start_from) > 0 then
   print('initializing weights from ' .. opt.start_from)
   local loaded_checkpoint = torch.load(opt.start_from)
   protos = loaded_checkpoint.protos
-  net_utils.unsanitize_gradients(protos.cnn)
+  -- net_utils.unsanitize_gradients(protos.cnn)
   local lm_modules = protos.lm:getModulesList()
-  for k,v in pairs(lm_modules) do net_utils.unsanitize_gradients(v) end
+  -- for k,v in pairs(lm_modules) do net_utils.unsanitize_gradients(v) end
   protos.crit = nn.LanguageModelCriterion() -- not in checkpoints, create manually
   protos.expander = nn.FeatExpander(opt.seq_per_img) -- not in checkpoints, create manually
 else
@@ -162,9 +170,9 @@ thin_lm.core:share(protos.lm.core, 'weight', 'bias') -- TODO: we are assuming th
 thin_lm.lookup_table:share(protos.lm.lookup_table, 'weight', 'bias')
 local thin_cnn = protos.cnn:clone('weight', 'bias')
 -- sanitize all modules of gradient storage so that we dont save big checkpoints
-net_utils.sanitize_gradients(thin_cnn)
+-- net_utils.sanitize_gradients(thin_cnn)
 local lm_modules = thin_lm:getModulesList()
-for k,v in pairs(lm_modules) do net_utils.sanitize_gradients(v) end
+-- for k,v in pairs(lm_modules) do net_utils.sanitize_gradients(v) end
 
 -- create clones and ensure parameter sharing. we have to do this 
 -- all the way here at the end because calls such as :cuda() and
@@ -350,6 +358,9 @@ while true do
       -- use the (negative) validation loss as a score
       current_score = -val_loss
     end
+    print(lang_stats['CIDEr'])
+    print(best_score)
+
     if best_score == nil or current_score > best_score then
       if best_score == nil then
         print("current " .. current_score .. " best none")
