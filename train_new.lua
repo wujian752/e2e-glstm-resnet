@@ -81,6 +81,7 @@ cmd:option('-layer_num', 44, 'number of cnn layers for image embedding')
 cmd:option('-log_file', 'loss.log', '')
 
 cmd:option('-useNet', 'VGG', 'CNN type')
+cmd:option('-model_suffix', '', 'suffix of saved model.')
 
 cmd:text()
 
@@ -115,7 +116,7 @@ if string.len(opt.start_from) > 0 then
   local loaded_checkpoint = torch.load(opt.start_from)
   protos = loaded_checkpoint.protos
   -- net_utils.unsanitize_gradients(protos.cnn)
-  local lm_modules = protos.lm:getModulesList()
+  -- local lm_modules = protos.lm:getModulesList()
   -- for k,v in pairs(lm_modules) do net_utils.unsanitize_gradients(v) end
   protos.crit = nn.LanguageModelCriterion() -- not in checkpoints, create manually
   protos.expander = nn.FeatExpander(opt.seq_per_img) -- not in checkpoints, create manually
@@ -166,12 +167,12 @@ assert(cnn_params:nElement() == cnn_grad_params:nElement())
 -- modules. These thin module will have no intermediates and will be used
 -- for checkpointing to write significantly smaller checkpoint files
 local thin_lm = protos.lm:clone()
-thin_lm.core:share(protos.lm.core, 'weight', 'bias') -- TODO: we are assuming that LM has specific members! figure out clean way to get rid of, not modular.
-thin_lm.lookup_table:share(protos.lm.lookup_table, 'weight', 'bias')
-local thin_cnn = protos.cnn:clone('weight', 'bias')
+thin_lm.core:share(protos.lm.core, 'weight', 'bias', 'gradWeight', 'gradBias') -- TODO: we are assuming that LM has specific members! figure out clean way to get rid of, not modular.
+thin_lm.lookup_table:share(protos.lm.lookup_table, 'weight', 'bias', 'gradWeight', 'gradBias')
+local thin_cnn = protos.cnn:clone('weight', 'bias', 'gradWeight', 'gradBias')
 -- sanitize all modules of gradient storage so that we dont save big checkpoints
 -- net_utils.sanitize_gradients(thin_cnn)
-local lm_modules = thin_lm:getModulesList()
+-- local lm_modules = thin_lm:getModulesList()
 -- for k,v in pairs(lm_modules) do net_utils.sanitize_gradients(v) end
 
 -- create clones and ensure parameter sharing. we have to do this 
@@ -334,7 +335,7 @@ while true do
     if lang_stats then
       val_lang_stats_history[iter] = lang_stats
     end
-
+    
     local checkpoint_path = path.join(opt.checkpoint_path, 'model_id' .. opt.id)
 
     -- write a (thin) json report
@@ -371,8 +372,10 @@ while true do
       if iter > 0 then -- dont save on very first iteration
         -- include the protos (which have weights) and save to file
         local save_protos = {}
-        save_protos.lm = thin_lm -- these are shared clones, and point to correct param storage
-        save_protos.cnn = thin_cnn
+        -- save_protos.lm = thin_lm -- these are shared clones, and point to correct param storage
+        -- save_protos.cnn = thin_cnn
+        save_protos.lm = protos.lm
+        save_protos.cnn = protos.cnn
         checkpoint.protos = save_protos
         -- also include the vocabulary mapping so that we can use the checkpoint 
         -- alone to run on arbitrary images without the data loader
